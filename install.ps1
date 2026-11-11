@@ -1,129 +1,137 @@
-<#
-.SYNOPSIS
-    Hook office-diff into git - for every repository of this user (default) or for one repository.
-
-.EXAMPLE
-    powershell -ExecutionPolicy Bypass -File install.ps1                       # all repos
-.EXAMPLE
-    powershell -ExecutionPolicy Bypass -File install.ps1 -Repo C:\path\to\repo # one repo only
-.EXAMPLE
-    powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall            # undo (add -Repo to undo a repo install)
-
-.DESCRIPTION
-    Writes office-diff.gitconfig next to this script (the textconv driver "office", the difftool
-    "office" and the aliases `git compare` / `git wdiff`) and adds it to git's config with
-    include.path, so everything stays in one file and uninstalling is a single line.
-    It also marks *.docx / *.pptx with "diff=office" in git's attributes file
-    (~/.config/git/attributes for a user install, .git/info/attributes for a repo install).
-    Re-run it after moving this folder.
-#>
 param(
     [string]$Repo,
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
-# For git calls that may legitimately fail (key not set, not a repo): quiet, and no terminating
-# NativeCommandError from stderr on Windows PowerShell 5.1.
-function Get-Git { $ErrorActionPreference = 'Continue'; & git @args 2>$null }
 
-$toolDir    = $PSScriptRoot -replace '\\', '/'
+function Invoke-GitQuietly {
+    $ErrorActionPreference = 'Continue'
+    & git @args 2>$null
+}
+
+function Get-HomeDirectory {
+    @($env:HOME, $env:USERPROFILE) | Where-Object { $_ } | Select-Object -First 1
+}
+
+function Get-Sha256([string]$file) {
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try { [BitConverter]::ToString($sha256.ComputeHash([IO.File]::ReadAllBytes($file))) -replace '-' }
+    finally { $sha256.Dispose() }
+}
+
+function Test-ComServer([string]$progId) {
+    [bool](Get-Item "Registry::HKEY_CLASSES_ROOT\$progId\CLSID" -ErrorAction SilentlyContinue)
+}
+
+function Format-Requirement([string]$progId, [string]$neededFor) {
+    if (Test-ComServer $progId) { 'found' } else { "NOT found (needed for $neededFor)" }
+}
+
+function Test-OfficeDiffInclude([string]$path) {
+    if (($path -replace '\\', '/') -notlike '*/office-diff.gitconfig') { return $false }
+    -not (Test-Path -LiteralPath $path) -or (Select-String -LiteralPath $path -SimpleMatch 'office-textconv.ps1' -Quiet)
+}
+
+function Set-AttributeBlock([string]$file, [string[]]$block) {
+    $kept = [Collections.Generic.List[string]]::new()
+    $insideBlock = $false
+    if (Test-Path -LiteralPath $file) {
+        foreach ($line in Get-Content -LiteralPath $file) {
+            if ($line -like "# >>> $marker*") { $insideBlock = $true; continue }
+            if ($line -like "# <<< $marker*") { $insideBlock = $false; continue }
+            if (-not $insideBlock) { $kept.Add($line) }
+        }
+    }
+    while ($kept.Count -and -not $kept[$kept.Count - 1].Trim()) { $kept.RemoveAt($kept.Count - 1) }
+    if ($block) {
+        if ($kept.Count) { $kept.Add('') }
+        $kept.AddRange($block)
+    }
+    if (-not $kept.Count -and -not (Test-Path -LiteralPath $file)) { return }
+    New-Item -ItemType Directory -Path (Split-Path $file) -Force | Out-Null
+    $text = if ($kept.Count) { ($kept -join "`n") + "`n" } else { '' }
+    [IO.File]::WriteAllText($file, $text, [Text.UTF8Encoding]::new($false))
+}
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw 'git was not found on PATH. Install Git for Windows first: https://git-scm.com/download/win'
+}
+
+$toolDir = $PSScriptRoot -replace '\\', '/'
 $configFile = Join-Path $PSScriptRoot 'office-diff.gitconfig'
-$includeVal = $configFile -replace '\\', '/'
-$marker     = 'office-diff'
-$attrBlock  = @(
-    "# >>> $marker (managed by $toolDir/install.ps1) >>>",
-    '*.docx diff=office',
-    '*.docm diff=office',
-    '*.pptx diff=office',
-    '*.pptm diff=office',
+$includePath = $configFile -replace '\\', '/'
+$marker = 'office-diff'
+$attributeBlock = @(
+    "# >>> $marker (managed by $toolDir/install.ps1) >>>"
+    '*.docx diff=office'
+    '*.docm diff=office'
+    '*.pptx diff=office'
+    '*.pptm diff=office'
     "# <<< $marker <<<"
 )
 
-# --- where to write: user-wide or one repository -------------------------------------------
 if ($Repo) {
-    $top = Get-Git -C $Repo rev-parse --show-toplevel
+    $top = Invoke-GitQuietly -C $Repo rev-parse --show-toplevel
     if (-not $top) { throw "'$Repo' is not a git repository." }
-    $gitArgs  = @('-C', $top, 'config', '--local')
-    $attrFile = git -C $top rev-parse --path-format=absolute --git-path info/attributes
-    $scope    = "repository $top"
+    $gitConfig = @('-C', $top, 'config', '--local')
+    $attributesFile = git -C $top rev-parse --path-format=absolute --git-path info/attributes
+    $scope = "repository $top"
 } else {
-    $gitArgs  = @('config', '--global')
-    $attrFile = Get-Git config --global --get core.attributesfile
-    if ($attrFile) {
-        $attrFile = $attrFile -replace '^~', ($env:HOME, $env:USERPROFILE | Where-Object { $_ } | Select-Object -First 1)
+    $gitConfig = @('config', '--global')
+    $attributesFile = Invoke-GitQuietly config --global --get core.attributesfile
+    if ($attributesFile) {
+        $attributesFile = $attributesFile -replace '^~', (Get-HomeDirectory)
     } else {
-        $xdg  = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path ($env:HOME, $env:USERPROFILE | Where-Object { $_ } | Select-Object -First 1) '.config' }
-        $attrFile = Join-Path $xdg 'git\attributes'
+        $configHome = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path (Get-HomeDirectory) '.config' }
+        $attributesFile = Join-Path $configHome 'git\attributes'
     }
     $scope = 'all repositories of this user'
 }
-$attrFile = [IO.Path]::GetFullPath($attrFile)
+$attributesFile = [IO.Path]::GetFullPath($attributesFile)
 
-function Set-AttrBlock([bool]$present) {
-    $lines = if (Test-Path -LiteralPath $attrFile) { @(Get-Content -LiteralPath $attrFile) } else { @() }
-    $kept = New-Object Collections.Generic.List[string]
-    $inBlock = $false
-    foreach ($l in $lines) {
-        if ($l -like "# >>> $marker*") { $inBlock = $true; continue }
-        if ($l -like "# <<< $marker*") { $inBlock = $false; continue }
-        if (-not $inBlock) { $kept.Add($l) }
+$existingIncludes = @(Invoke-GitQuietly @gitConfig --get-all include.path | Select-Object -Unique)
+foreach ($path in $existingIncludes) {
+    if (($Uninstall -or $path -ne $includePath) -and (Test-OfficeDiffInclude $path)) {
+        & git @gitConfig --fixed-value --unset-all include.path $path
     }
-    while ($kept.Count -and -not $kept[$kept.Count - 1].Trim()) { $kept.RemoveAt($kept.Count - 1) }
-    if ($present) {
-        if ($kept.Count) { $kept.Add('') }
-        $kept.AddRange([string[]]$attrBlock)
-    }
-    if (-not $kept.Count -and -not (Test-Path -LiteralPath $attrFile)) { return }
-    New-Item -ItemType Directory -Path (Split-Path $attrFile) -Force | Out-Null
-    $text = if ($kept.Count) { ($kept -join "`n") + "`n" } else { '' }
-    [IO.File]::WriteAllText($attrFile, $text, (New-Object Text.UTF8Encoding($false)))
 }
 
-$included = @(Get-Git @gitArgs --get-all include.path)
-
 if ($Uninstall) {
-    if ($included -contains $includeVal) { & git @gitArgs --fixed-value --unset-all include.path $includeVal }
-    Set-AttrBlock $false
+    Set-AttributeBlock $attributesFile @()
     Write-Host "office-diff removed from $scope."
     return
 }
 
-# --- generate the git config snippet ------------------------------------------------------
-# PowerShell 7 starts ~2x faster than Windows PowerShell; textconv runs once per file version.
-$fastPs = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-$run    = '-NoProfile -ExecutionPolicy Bypass -File'
+$textconvShell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+$runScript = '-NoProfile -ExecutionPolicy Bypass -File'
+$textconvVersion = (Get-Sha256 (Join-Path $PSScriptRoot 'office-textconv.ps1')).Substring(0, 12)
 $config = @(
-    "# Generated by $toolDir/install.ps1 - re-run the installer instead of editing this file.",
-    '[diff "office"]',
-    "`ttextconv = $fastPs $run \`"$toolDir/office-textconv.ps1\`"",
-    "`tcachetextconv = true",
-    '[difftool "office"]',
-    "`tcmd = powershell.exe $run \`"$toolDir/office-compare.ps1\`" \`"`$LOCAL\`" \`"`$REMOTE\`" \`"`$MERGED\`"",
-    '[alias]',
-    "`tcompare = difftool --tool=office --no-prompt",
+    "# Generated by $toolDir/install.ps1 - re-run the installer instead of editing this file."
+    '[diff "office"]'
+    "`ttextconv = $textconvShell $runScript \`"$toolDir/office-textconv.ps1\`" -CacheKey $textconvVersion"
+    "`tcachetextconv = true"
+    '[difftool "office"]'
+    "`tcmd = powershell.exe $runScript \`"$toolDir/office-compare.ps1\`" \`"`$LOCAL\`" \`"`$REMOTE\`" \`"`$MERGED\`""
+    '[alias]'
+    "`tcompare = difftool --tool=office --no-prompt"
     "`twdiff = diff --word-diff=color"
 )
-[IO.File]::WriteAllText($configFile, ($config -join "`n") + "`n", (New-Object Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText($configFile, ($config -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
 
 foreach ($alias in 'compare', 'wdiff') {
-    $origin = Get-Git config --show-origin --get "alias.$alias"
+    $origin = Invoke-GitQuietly config --show-origin --get "alias.$alias"
     if ($origin -and $origin -notmatch [regex]::Escape('office-diff.gitconfig')) {
         Write-Warning "You already have alias '$alias' ($origin); office-diff's version will take precedence where both apply."
     }
 }
 
-if ($included -notcontains $includeVal) { & git @gitArgs --add include.path $includeVal }
-Set-AttrBlock $true
+if ($existingIncludes -notcontains $includePath) { & git @gitConfig --add include.path $includePath }
+Set-AttributeBlock $attributesFile $attributeBlock
 
-# --- report -------------------------------------------------------------------------------
-$found = {
-    param($progId)
-    [bool](Get-Item "Registry::HKEY_CLASSES_ROOT\$progId\CLSID" -ErrorAction SilentlyContinue)
-}
 Write-Host "office-diff installed for $scope."
-Write-Host "  git config : include.path = $includeVal"
-Write-Host "  attributes : $attrFile"
-Write-Host ("  Word       : " + $(if (& $found 'Word.Application') { 'found' } else { 'NOT found (needed for .docx compare)' }))
-Write-Host ("  PowerPoint : " + $(if (& $found 'PowerPoint.Application') { 'found' } else { 'NOT found (needed for .pptx compare)' }))
+Write-Host "  git config : include.path = $includePath"
+Write-Host "  attributes : $attributesFile"
+Write-Host "  Word       : $(Format-Requirement 'Word.Application' '.docx compare')"
+Write-Host "  PowerPoint : $(Format-Requirement 'PowerPoint.Application' '.pptx compare')"
 Write-Host ''
 Write-Host 'Try:  git diff | git wdiff | git compare | git compare --no-index old.docx new.docx'

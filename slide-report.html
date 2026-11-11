@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slide changes</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --text: #1c2230;
+    --muted: #5c6574;
+    --border: #dce0e6;
+    --focus: #2456c4;
+    --changed: #a65400;
+    --changed-bg: #ffefd9;
+    --added: #18733a;
+    --added-bg: #dbf3e2;
+    --removed: #b42323;
+    --removed-bg: #fde3e3;
+    --moved: #2456c4;
+    --moved-bg: #e2eaff;
+    --unchanged: #5c6574;
+    --unchanged-bg: #eceef2;
+    --ins-bg: #c9efd4;
+    --del-bg: #ffd6d3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101317;
+      --surface: #191d23;
+      --text: #e5e8ed;
+      --muted: #9aa3b1;
+      --border: #2b313a;
+      --focus: #85a8ff;
+      --changed: #f2a54e;
+      --changed-bg: #3a2912;
+      --added: #55c27a;
+      --added-bg: #13301f;
+      --removed: #ff8178;
+      --removed-bg: #3c1615;
+      --moved: #85a8ff;
+      --moved-bg: #1a2749;
+      --unchanged: #9aa3b1;
+      --unchanged-bg: #242a32;
+      --ins-bg: #1d4a2b;
+      --del-bg: #5b1f1c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px 12px;
+  }
+  .header-inner, main { max-width: 1400px; margin: 0 auto; }
+  h1 { margin: 0; font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+  .versions { margin-top: 2px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .filter[aria-pressed="true"] { background: var(--tone-bg); border-color: var(--tone); color: var(--tone); }
+  .filter:disabled { opacity: 0.45; cursor: default; }
+  .filter:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .filter .count { font-weight: 700; font-variant-numeric: tabular-nums; }
+  main { padding: 20px 24px 48px; display: flex; flex-direction: column; gap: 16px; }
+  .slide {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--tone);
+    border-radius: 8px;
+    padding: 14px 16px 16px;
+    scroll-margin-top: 140px;
+  }
+  .slide:focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .slide-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; margin-bottom: 12px; }
+  .slide-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .tag {
+    padding: 1px 9px;
+    border-radius: 999px;
+    background: var(--tone-bg);
+    color: var(--tone);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .detail { color: var(--muted); font-size: 13px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  figure { margin: 0; min-width: 0; }
+  figcaption { margin-bottom: 4px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  figure a { display: block; }
+  figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #fff;
+  }
+  .absent {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 16 / 9;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .text { margin-top: 12px; }
+  .text h3 {
+    margin: 0 0 4px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .diff {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: var(--bg);
+    font: 13px/1.6 "Cascadia Mono", Consolas, ui-monospace, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  ins { background: var(--ins-bg); text-decoration: none; border-radius: 2px; }
+  del { background: var(--del-bg); text-decoration: line-through; border-radius: 2px; }
+  .same-text { color: var(--muted); font-size: 13px; margin: 0; }
+  .message { padding: 48px 16px; color: var(--muted); text-align: center; }
+  .hint { color: var(--muted); font-size: 12px; text-align: center; }
+  kbd {
+    padding: 0 5px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    font: 11px/1.6 "Cascadia Mono", Consolas, monospace;
+  }
+  .tone-changed { --tone: var(--changed); --tone-bg: var(--changed-bg); }
+  .tone-added { --tone: var(--added); --tone-bg: var(--added-bg); }
+  .tone-removed { --tone: var(--removed); --tone-bg: var(--removed-bg); }
+  .tone-moved { --tone: var(--moved); --tone-bg: var(--moved-bg); }
+  .tone-unchanged { --tone: var(--unchanged); --tone-bg: var(--unchanged-bg); }
+  @media (max-width: 720px) {
+    header { padding: 12px 16px 10px; }
+    main { padding: 16px 16px 40px; }
+    .pair { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <h1 id="title">Slide changes</h1>
+    <div class="versions" id="versions"></div>
+    <div class="filters" id="filters" role="toolbar" aria-label="Show slides that are"></div>
+  </div>
+</header>
+<main id="slides"></main>
+<script type="application/json" id="report-data">null</script>
+<script>
+const report = JSON.parse(document.getElementById('report-data').textContent);
+
+const STATUSES = [
+  { id: 'changed', label: 'Changed' },
+  { id: 'added', label: 'Added' },
+  { id: 'removed', label: 'Removed' },
+  { id: 'moved', label: 'Moved' },
+  { id: 'unchanged', label: 'Unchanged' },
+];
+const shown = new Set(['changed', 'added', 'removed', 'moved']);
+
+function h(tag, props, ...children) {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(props || {})) {
+    if (value === undefined || value === null || value === false) continue;
+    if (name in node && typeof value !== 'string') node[name] = value;
+    else node.setAttribute(name, value === true ? '' : value);
+  }
+  node.append(...children.flat().filter(child => child !== null && child !== undefined && child !== false));
+  return node;
+}
+
+function tokenize(text) {
+  return text.match(/\n|[^\S\n]+|[\p{L}\p{N}_]+[^\S\n]*|[^\s\p{L}\p{N}_][^\S\n]*/gu) || [];
+}
+
+function diffWords(oldText, newText) {
+  const a = tokenize(oldText);
+  const b = tokenize(newText);
+  if (a.length * b.length > 4000000) return [['del', oldText], ['ins', newText]];
+  const lcs = Array.from({ length: a.length + 1 }, () => new Uint32Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const parts = [];
+  let removed = '';
+  let inserted = '';
+  const flush = () => {
+    if (removed) parts.push(['del', removed]);
+    if (inserted) parts.push(['ins', inserted]);
+    removed = inserted = '';
+  };
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      flush();
+      const last = parts[parts.length - 1];
+      if (last && last[0] === 'same') last[1] += a[i];
+      else parts.push(['same', a[i]]);
+      i++;
+      j++;
+    } else if (j >= b.length || (i < a.length && lcs[i + 1][j] >= lcs[i][j + 1])) {
+      removed += a[i++];
+    } else {
+      inserted += b[j++];
+    }
+  }
+  flush();
+  return parts;
+}
+
+function renderTextChanges(slide) {
+  if (slide.status !== 'changed') return null;
+  if (slide.oldText === slide.newText) {
+    return h('div', { class: 'text' },
+      h('p', { class: 'same-text' }, 'Text is the same; the difference is in layout, formatting, pictures or visibility.'));
+  }
+  const diff = h('pre', { class: 'diff' });
+  for (const [kind, text] of diffWords(slide.oldText || '', slide.newText || '')) {
+    diff.append(kind === 'same' ? document.createTextNode(text) : h(kind, {}, text));
+  }
+  return h('div', { class: 'text' }, h('h3', {}, 'Text changes'), diff);
+}
+
+function renderImage(image, caption, alt, missingText) {
+  return h('figure', {},
+    h('figcaption', {}, caption),
+    image
+      ? h('a', { href: image, target: '_blank', rel: 'noopener', title: 'Open full size' },
+          h('img', { src: image, alt, loading: 'lazy' }))
+      : h('div', { class: 'absent' }, missingText));
+}
+
+function describe(slide) {
+  const details = [];
+  const both = slide.oldNumber !== null && slide.newNumber !== null;
+  if (slide.moved) details.push(`moved from slide ${slide.oldNumber}`);
+  else if (both && slide.oldNumber !== slide.newNumber) details.push(`was slide ${slide.oldNumber}`);
+  if (both && slide.oldHidden !== slide.newHidden) details.push(slide.newHidden ? 'now hidden' : 'no longer hidden');
+  else if (slide.newHidden || (slide.status === 'removed' && slide.oldHidden)) details.push('hidden');
+  return details.join(' · ');
+}
+
+function renderSlide(slide) {
+  const status = STATUSES.find(s => s.id === slide.status);
+  const title = slide.newNumber !== null ? `Slide ${slide.newNumber}` : `Old slide ${slide.oldNumber}`;
+  const detail = describe(slide);
+  return h('section', { class: `slide tone-${slide.status}`, tabindex: '-1', 'data-status': slide.status, 'aria-label': `${title}, ${status.label.toLowerCase()}` },
+    h('div', { class: 'slide-head' },
+      h('h2', {}, title),
+      h('span', { class: 'tag' }, status.label),
+      detail ? h('span', { class: 'detail' }, detail) : null),
+    h('div', { class: 'pair' },
+      renderImage(slide.oldImage, report.oldLabel, `${report.oldLabel}, slide ${slide.oldNumber}`, 'Not in this version'),
+      renderImage(slide.newImage, report.newLabel, `${report.newLabel}, slide ${slide.newNumber}`, 'Not in this version')),
+    renderTextChanges(slide));
+}
+
+function render() {
+  const main = document.getElementById('slides');
+  if (!report) {
+    main.append(h('p', { class: 'message' }, 'This page is a template. office-compare.ps1 fills it in when it compares two presentations.'));
+    return;
+  }
+  document.title = `${report.title} - slide changes`;
+  document.getElementById('title').textContent = report.title;
+  const oldCount = report.slides.filter(s => s.oldNumber !== null).length;
+  const newCount = report.slides.filter(s => s.newNumber !== null).length;
+  document.getElementById('versions').textContent =
+    `${report.oldLabel} (${oldCount} slides) → ${report.newLabel} (${newCount} slides)`;
+
+  const counts = Object.fromEntries(STATUSES.map(s => [s.id, report.slides.filter(x => x.status === s.id).length]));
+  const filters = document.getElementById('filters');
+  for (const status of STATUSES) {
+    const button = h('button', {
+      type: 'button',
+      class: `filter tone-${status.id}`,
+      'aria-pressed': String(shown.has(status.id)),
+      disabled: counts[status.id] === 0,
+    }, h('span', { class: 'count' }, String(counts[status.id])), status.label);
+    button.addEventListener('click', () => {
+      if (shown.has(status.id)) shown.delete(status.id);
+      else shown.add(status.id);
+      button.setAttribute('aria-pressed', String(shown.has(status.id)));
+      applyFilters();
+    });
+    filters.append(button);
+  }
+
+  for (const slide of report.slides) main.append(renderSlide(slide));
+  main.append(h('p', { class: 'message', id: 'empty', hidden: true }));
+  main.append(h('p', { class: 'hint' }, 'Press ', h('kbd', {}, 'J'), ' / ', h('kbd', {}, 'K'),
+    ' to jump to the next or previous slide. Click a picture to open it full size.'));
+  applyFilters();
+}
+
+function applyFilters() {
+  let visible = 0;
+  for (const card of document.querySelectorAll('.slide')) {
+    card.hidden = !shown.has(card.dataset.status);
+    if (!card.hidden) visible++;
+  }
+  const empty = document.getElementById('empty');
+  const differences = report.slides.some(s => s.status !== 'unchanged');
+  empty.hidden = visible > 0;
+  empty.textContent = differences
+    ? 'No slides match the selected filters.'
+    : 'No differences: every slide looks the same and has the same text in both versions.';
+}
+
+document.addEventListener('keydown', event => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  const step = { j: 1, k: -1 }[event.key.toLowerCase()];
+  if (!step) return;
+  const cards = [...document.querySelectorAll('.slide:not([hidden])')];
+  if (!cards.length) return;
+  const current = cards.indexOf(document.activeElement);
+  const next = current < 0 ? (step > 0 ? 0 : cards.length - 1) : Math.min(Math.max(current + step, 0), cards.length - 1);
+  cards[next].focus({ preventScroll: true });
+  cards[next].scrollIntoView({ block: 'start', behavior: 'smooth' });
+  event.preventDefault();
+});
+
+render();
+</script>
+</body>
+</html>

@@ -5,20 +5,22 @@ Office's own tools. Works inside git (`git diff`, `git compare`) and without git
 
 | File type | `git diff` / `git wdiff` (terminal) | `git compare` / `compare.cmd` (window) |
 |---|---|---|
-| `.docx` `.docm` | text of every paragraph, table, equation, footnote | **Word Compare**: old vs new as tracked changes |
-| `.pptx` `.pptm` | text of every slide + speaker notes, in slide order | both versions **side by side** in PowerPoint (old left, new right) + text diff |
-| `.xlsx` `.xlsm` | binary | **Spreadsheet Compare** (Office Pro Plus / Microsoft 365 Apps) |
-| `.doc` `.ppt` `.xls` | binary | same as above (no text diff for `.ppt`) |
+| `.docx` `.docm` | the document as text: headings, paragraphs, tables, text boxes, equations, headers and footers, footnotes, endnotes, comments | **Word Compare**: old vs new as tracked changes |
+| `.pptx` `.pptm` | text of every slide and its speaker notes, in slide order | **Slide report** in your browser: changed, added, removed and moved slides, old and new side by side, with word-level text changes |
+| `.xlsx` `.xlsm` | binary | **Spreadsheet Compare** (Office Pro Plus / Microsoft 365 Apps for enterprise) |
+| `.doc` `.ppt` `.xls` | binary | same as above |
 
-> PowerPoint's own *Compare & Merge* was retired in Microsoft 365 version 2502 (Microsoft removed
-> it and its `Merge`/`MergeWithBaseline` automation calls), so side by side + text diff is the
-> closest built-in option left.
+PowerPoint's own *Compare & Merge* was retired in Microsoft 365 version 2502, so office-diff builds
+its own comparison: PowerPoint renders every slide of both versions, slides are matched by
+PowerPoint's internal slide ID (so reordering is recognised), and anything that looks different or
+has different text or notes is flagged.
 
 ## Requirements
 
 - Windows with [Git for Windows](https://git-scm.com/download/win)
-- Microsoft Word / PowerPoint desktop apps (Microsoft 365 or Office 2016+)
-- Windows PowerShell 5.1 (built in). PowerShell 7 (`pwsh`) is used for `git diff` when installed - it's ~2x faster.
+- Microsoft Word / PowerPoint desktop apps (Microsoft 365 or Office 2016+) for `git compare`;
+  `git diff` reads the files directly and works without Office
+- Windows PowerShell 5.1 (built in). PowerShell 7 (`pwsh`) is used for `git diff` when installed - it starts faster.
 
 ## Install
 
@@ -31,7 +33,8 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Repo C:\thesis # or: just 
 
 The installer writes `office-diff.gitconfig` (machine-specific, git-ignored) and adds it to your
 git config with `include.path`, then marks `*.docx`/`*.pptx` as `diff=office` in git's attributes
-file. Re-run it if you move this folder.
+file. **Re-run it after moving or updating this folder**: it repoints git at the new location and
+makes git drop text it cached from the previous version of the scripts.
 
 Uninstall: `install.ps1 -Uninstall` (add `-Repo <path>` if you installed for one repo).
 
@@ -57,17 +60,35 @@ The scripts also run on their own:
 .\office-textconv.ps1 slides.pptx          # print the text git diff sees
 ```
 
+### Reading the text diff
+
+`git diff` shows a plain-text rendering of each document:
+
+```text
+# Chapter heading                 headings are marked with # (## for level 2, ...)
+| Name | Score |                  one line per table row
+Picture:[image]                   pictures, charts, SmartArt and media show as [image], [chart], ...
+=== Slide 4 (hidden) ===          slide headers say when a slide is hidden
+--- notes ---                     speaker notes follow the slide text
+=== Comments ===                  Word comments, prefixed with their author
+```
+
+Tracked changes are shown as if accepted, so the diff matches what the document says now.
+
 ## How it works
 
 - `office-textconv.ps1` - git *textconv* driver. Reads the Office Open XML inside the file (no Office
-  needed) and prints one line per paragraph; pictures show up as `[image]`. Results for committed
-  versions are cached (`cachetextconv`), so `git log -p` stays fast.
+  needed). Results for committed versions are cached (`cachetextconv`), so `git log -p` stays fast.
 - `office-compare.ps1` - git *difftool*. Copies both versions to `%TEMP%\office-diff\` (originals are
   never opened or locked; copies older than a day are cleaned up) and drives Word / PowerPoint through
-  COM automation. Non-Office files fall back to a normal `git diff`.
+  COM automation. Word documents that contain tracked changes are compared as if those changes were
+  accepted, which is what Word itself does. Non-Office files fall back to a normal `git diff`.
+- `slide-report.html` - the page template for the PowerPoint slide report. Press <kbd>J</kbd> / <kbd>K</kbd>
+  to step through slides, use the buttons at the top to show or hide each kind of change.
 
 ## Troubleshooting
 
 - **`git compare` does nothing for a file** - it must be modified relative to what you compare against; check with `git status`.
-- **Word/PowerPoint stays in the background** - click its taskbar icon; Windows sometimes blocks focus stealing.
+- **Every slide shows as changed** - the two decks share no slide IDs (for example, one was rebuilt from scratch), so slides are matched by position instead.
+- **Word stays in the background** - click its taskbar icon; Windows sometimes blocks focus stealing.
 - **Script blocked by execution policy** - always run via `powershell -ExecutionPolicy Bypass -File ...` (the git config already does this).
